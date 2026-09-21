@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentinelTrace</title>
+    <link rel="stylesheet" href="/static/index.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div id="metrics-strip">
+        <div class="metric">
+            <span class="metric-label">False Positive Rate</span>
+            <span class="metric-value monospace" id="fpr-val">0.0%</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Avg Detection Latency</span>
+            <span class="metric-value monospace" id="latency-val">0ms</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Sessions Monitored</span>
+            <span class="metric-value monospace" id="sessions-val">0</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Events Processed</span>
+            <span class="metric-value monospace" id="events-val">0</span>
+        </div>
+    </div>
+
+    <div class="layout">
+        <main class="live-feed" id="live-feed">
+            <div class="chart-container">
+                <canvas id="latencyChart"></canvas>
+            </div>
+            <h2>Live Feed</h2>
+            <div id="feed-container">
+                <!-- Session cards will be injected here -->
+            </div>
+        </main>
+        
+        <aside class="reference-panel">
+            <div class="demo-controls">
+                <h2>Demo Controls</h2>
+                <div class="btn-grid">
+                    <button onclick="triggerAttack('T1')">Inject T1</button>
+                    <button onclick="triggerAttack('T2')">Inject T2</button>
+                    <button onclick="triggerAttack('T3')">Inject T3</button>
+                    <button onclick="triggerAttack('T4')">Inject T4</button>
+                    <button onclick="triggerAttack('T5')">Inject T5</button>
+                    <button class="btn-stress" onclick="triggerAttack('50x')">Stress Test (50x)</button>
+                </div>
+            </div>
+
+            <h2>Technique Reference</h2>
+            <ul class="technique-list">
+                <li><strong>T1: Privilege Escalation</strong> - Chained tool sequence to elevate access.</li>
+                <li><strong>T2: Data Exfiltration</strong> - Reading and sending data externally.</li>
+                <li><strong>T3: Latency Side Channel</strong> - Repeated probing with unusual latency.</li>
+                <li><strong>T4: Context Flooding</strong> - Massive context delta to bury injections.</li>
+                <li><strong>T5: Argument Entropy</strong> - Highly entropic payload signatures.</li>
+            </ul>
+        </aside>
+    </div>
+
+    <script>
+        const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+            ? '' 
+            : 'https://sentineltrace-backend.onrender.com';
+        
+        const WS_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+            ? `ws://${window.location.host}`
+            : 'wss://sentineltrace-backend.onrender.com';
+
+        const ws = new WebSocket(`${WS_URL}/v1/feed`);
+        const feedContainer = document.getElementById('feed-container');
+
+        // Fetch metrics periodically
+        setInterval(async () => {
+            const res = await fetch(`${BACKEND_URL}/v1/metrics`);
+            const data = await res.json();
+            document.getElementById('fpr-val').textContent = data.false_positive_rate + '%';
+            document.getElementById('latency-val').textContent = data.avg_detection_latency_ms + 'ms';
+            document.getElementById('sessions-val').textContent = data.sessions_monitored;
+            document.getElementById('events-val').textContent = data.events_processed;
+        }, 1000);
+
+        function createEventCard(data) {
+            const card = document.createElement('div');
+            card.className = `event-card ${data.severity === 'high' ? 'severity-high' : 'severity-medium'}`;
+            
+            const header = document.createElement('div');
+            header.className = 'event-header';
+            
+            const tech = document.createElement('strong');
+            tech.textContent = `${data.technique_id} Detected`;
+            
+            const lat = document.createElement('span');
+            lat.className = 'monospace latency-badge';
+            lat.textContent = `${data.latency_to_detect_ms}ms to detect`;
+
+            header.appendChild(tech);
+            header.appendChild(lat);
+            
+            const content = document.createElement('div');
+            content.className = 'event-content';
+            
+            const trigger = document.createElement('div');
+            trigger.className = 'triggering-tools';
+            trigger.textContent = 'Triggering Chain: ' + (data.triggering_tools ? data.triggering_tools.join(' -> ') : 'Unknown');
+
+            const llmAnalysis = document.createElement('div');
+            llmAnalysis.className = 'llm-analysis';
+            llmAnalysis.id = `llm-${data.flag_id}`;
+            llmAnalysis.innerHTML = '<em>Awaiting AI SOC Analyst report...</em>';
+
+            const actions = document.createElement('div');
+            actions.className = 'card-actions';
+            actions.innerHTML = `
+                <button class="btn-remediate" onclick="isolateAgent('${data.session_id}', this, event)">Isolate Agent</button>
+                <button class="btn-export" onclick="exportToSIEM('${data.flag_id}', this, event)">Export to SIEM</button>
+            `;
+
+            content.appendChild(trigger);
+            content.appendChild(llmAnalysis);
+            content.appendChild(actions);
+            
+            card.appendChild(header);
+            card.appendChild(content);
+            
+            // Expand on click
+            card.addEventListener('click', (e) => {
+                // Prevent expanding/collapsing if a button is clicked
+                if(e.target.tagName !== 'BUTTON') {
+                    card.classList.toggle('expanded');
+                }
+            });
+            
+            return card;
+        }
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'alert') {
+                const card = createEventCard(msg.data);
+                card.id = `session-card-${msg.data.session_id}`;
+                feedContainer.prepend(card);
+                updateChart(msg.data.latency_to_detect_ms);
+            } else if (msg.type === 'analysis') {
+                const llmDiv = document.getElementById(`llm-${msg.flag_id}`);
+                if (llmDiv) {
+                    llmDiv.innerHTML = `<strong>AI Analyst:</strong> ${msg.text}`;
+                }
+            } else if (msg.type === 'remediate') {
+                const card = document.getElementById(`session-card-${msg.session_id}`);
+                if(card) {
+                    card.classList.add('remediated');
+                    const btn = card.querySelector('.btn-remediate');
+                    if(btn) {
+                        btn.disabled = true;
+                        btn.textContent = 'Agent Isolated';
+                    }
+                }
+            }
+        };
+
+        // Chart.js Setup
+        const ctx = document.getElementById('latencyChart').getContext('2d');
+        const latencyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Detection Latency (ms)',
+                    data: [],
+                    borderColor: '#ff3333',
+                    backgroundColor: 'rgba(255, 51, 51, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { display: false },
+                    y: { 
+                        beginAtZero: true, 
+                        grid: { color: '#333' },
+                        ticks: { color: '#999' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fff' } }
+                }
+            }
+        });
+
+        function updateChart(latency) {
+            const time = new Date().toLocaleTimeString();
+            latencyChart.data.labels.push(time);
+            latencyChart.data.datasets[0].data.push(latency);
+            if(latencyChart.data.labels.length > 20) {
+                latencyChart.data.labels.shift();
+                latencyChart.data.datasets[0].data.shift();
+            }
+            latencyChart.update();
+        }
+
+        // AJAX Functions
+        async function triggerAttack(techId) {
+            await fetch(`${BACKEND_URL}/v1/demo/attack/${techId}`, { method: 'POST' });
+        }
+
+        async function isolateAgent(sessionId, btn, e) {
+            e.stopPropagation();
+            btn.disabled = true;
+            btn.textContent = 'Isolating...';
+            await fetch(`${BACKEND_URL}/v1/sessions/${sessionId}/isolate`, { method: 'POST' });
+        }
+
+        async function exportToSIEM(flagId, btn, e) {
+            e.stopPropagation();
+            btn.disabled = true;
+            btn.textContent = 'Exporting...';
+            await fetch(`${BACKEND_URL}/v1/export/splunk`, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ flag_id: flagId })
+            });
+            btn.textContent = 'Exported to SIEM';
+        }
+    </script>
+</body>
+</html>
