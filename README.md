@@ -48,7 +48,4 @@ You no longer need the terminal to pitch this project! The web dashboard feature
 For a deep dive into the dual-stage detection engine and Mermaid.js flowcharts, see the [ARCHITECTURE.md](ARCHITECTURE.md) document.
 
 ---
-<div align="center">
-  <i>Built for the YC Fall Hackathon.</i>
-</div>
 # SentinelTrace
